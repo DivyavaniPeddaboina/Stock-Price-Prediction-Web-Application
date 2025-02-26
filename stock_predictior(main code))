@@ -1,0 +1,100 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import yfinance as yf
+from sklearn.preprocessing import MinMaxScaler
+from keras.layers import Dense, Dropout, LSTM
+from keras.models import Sequential
+
+# Fetch Stock Data
+start_date = '2012-01-01'
+end_date = '2022-12-21'
+stock_symbol = 'NVDA'
+
+data = yf.download(stock_symbol, start=start_date, end=end_date)
+data.reset_index(inplace=True)
+
+# Calculate Moving Averages
+ma_50 = data['Close'].rolling(50).mean()
+ma_100 = data['Close'].rolling(100).mean()
+ma_200 = data['Close'].rolling(200).mean()
+
+# Plot Moving Averages
+plt.figure(figsize=(10, 6))
+plt.plot(data['Close'], 'g', label="Closing Price")
+plt.plot(ma_50, 'orange', label="50-day MA")
+plt.plot(ma_100, 'r', label="100-day MA")
+plt.plot(ma_200, 'b', label="200-day MA")
+plt.legend()
+plt.show()
+
+# Data Preprocessing
+data.dropna(inplace=True)
+train_size = int(len(data) * 0.80)
+
+train_data = data['Close'][:train_size]
+test_data = data['Close'][train_size:]
+
+scaler = MinMaxScaler(feature_range=(0, 1))
+train_scaled = scaler.fit_transform(np.array(train_data).reshape(-1, 1))
+
+# Prepare Training Data
+X_train, Y_train = [], []
+
+for i in range(100, len(train_scaled)):
+    X_train.append(train_scaled[i-100:i])
+    Y_train.append(train_scaled[i, 0])
+
+X_train, Y_train = np.array(X_train), np.array(Y_train)
+
+# Build LSTM Model
+model = Sequential([
+    LSTM(units=50, activation='relu', return_sequences=True, input_shape=(X_train.shape[1], 1)),
+    Dropout(0.2),
+
+    LSTM(units=60, activation='relu', return_sequences=True),
+    Dropout(0.3),
+
+    LSTM(units=80, activation='relu', return_sequences=True),
+    Dropout(0.4),
+
+    LSTM(units=100, activation='relu'),
+    Dropout(0.5),
+
+    Dense(units=1)
+])
+
+# Compile and Train the Model
+model.compile(optimizer='adam', loss='mean_squared_error')
+model.fit(X_train, Y_train, epochs=50, batch_size=32, verbose=1)
+model.summary()
+
+# Prepare Test Data
+past_100_days = train_data.tail(100)
+test_series = pd.concat([past_100_days, test_data], ignore_index=True)
+test_scaled = scaler.transform(np.array(test_series).reshape(-1, 1))
+
+X_test, Y_test = [], []
+for i in range(100, len(test_scaled)):
+    X_test.append(test_scaled[i-100:i])
+    Y_test.append(test_scaled[i, 0])
+
+X_test, Y_test = np.array(X_test), np.array(Y_test)
+
+# Make Predictions
+Y_predicted = model.predict(X_test)
+scale_factor = 1 / scaler.scale_[0]
+Y_predicted = Y_predicted * scale_factor
+Y_test = Y_test * scale_factor
+
+# Plot Predictions vs Actual
+plt.figure(figsize=(10, 6))
+plt.plot(Y_test, 'g', label='Actual Price')
+plt.plot(Y_predicted, 'r', label='Predicted Price')
+plt.xlabel('Time')
+plt.ylabel('Stock Price')
+plt.legend()
+plt.show()
+
+# Save Model
+model.save('Stock_Price_Prediction_Model.keras')
